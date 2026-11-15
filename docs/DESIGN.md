@@ -62,8 +62,9 @@ The parser is a line-based state machine. It never stops on a bad line; it recor
 | `- <label> <sentence>（memo）` | Entry |
 | `> [!check]- 正答` | Start of answers; following `>` lines are answers |
 | `> <label>：answer ／ <label> answer` | One or more answers, split on `／` outside parentheses |
-| `- 54.1 #12 … ／ #13 … ／ 54.3 2b …` | Several entries on one line: split on `／` (outside parentheses) only where a label follows; an item number alone reuses the exercise before it |
-| `- 70.4 #3・#5 …` | One entry per item. If the text has exactly one `／` part per item, the parts go to the items in order; otherwise every item gets the whole text |
+| `- 54.1 #12 … ／ #13 … ／ 54.3 2b …` | Several entries on one line: split on every full-width `／` outside parentheses; an item number alone reuses the exercise before it |
+| `- 10/27 Speak A ／ B` | A part with no label is another entry with the label of the part before it (two mistakes in one session). The half-width `/` (`prefer / rather`) is not a separator |
+| `- 70.4 #3・#5 …` | One entry per item. If the parts with no label after it number exactly one per item, they go to the items in order; otherwise every item gets the whole text |
 | `> 141.1 #2 b・#3 c` | In answers, `・` followed by a label also separates answers |
 
 **Pairing answers:** at the end of a section, each answer is attached to the first
@@ -107,6 +108,10 @@ next answer without a label uses:
 - The group is kept to the end of the callout, across `>` lines, like the exercise for
   `#6` today. It is cleared at each new `> [!check]- 正答`.
 - An answer with no label and no group is reported as `unknown-answer-label`, as now.
+- A part that looks like a label we cannot read (a short prefix before `：`, such as
+  `想起：` or `130：`) is reported as `unknown-answer-label` and does not take the group.
+  The answers after it on the line belong to that unknown label and are skipped
+  without another warning.
 
 **Two-pass pairing** (at the end of a section):
 1. Full labels first, with the existing rule (same key, first unanswered entry).

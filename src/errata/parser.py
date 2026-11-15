@@ -42,6 +42,8 @@ _MEMO = re.compile(r"（(?P<memo>[^（）]*)）\s*$")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _REPEAT = re.compile(r"(\d+)回目")
 _TABLE_ROW = re.compile(r"^\|(?P<cells>.+)\|\s*$")
+# Text that looks like a label: a short prefix without "（" before "：".
+_LABEL_LIKE = re.compile(r"^[^：:（(]{1,15}[：:]")
 _OPEN = "（("
 _CLOSE = "）)"
 
@@ -98,6 +100,7 @@ class Entry:
     date: date | None = None
     answer: str | None = None
     answer_line: int | None = None
+    answer_by_order: bool = False  # paired by order, not by its own label (DESIGN.md 4.1)
 
     @property
     def entry_id(self) -> str:
@@ -205,9 +208,10 @@ class _Parser:
         self.section: Literal["none", "summary", "category", "pending", "other"] = "none"
         self.category: Category | None = None
         self.entries: list[Entry] = []
-        self.answers: list[tuple[str, str, int]] = []  # (label key, answer, line)
+        # (label, answer, line, label written on the answer itself)
+        self.answers: list[tuple[Label, str, int, bool]] = []
         self.in_callout = False
-        self.exercise: str | None = None  # last exercise seen in the current callout
+        self.group: Label | None = None  # left by the last answer in the current callout
 
     # -- helpers ------------------------------------------------------------
 
@@ -277,7 +281,7 @@ class _Parser:
             return
         if _CHECK_CALLOUT.match(raw):
             self.in_callout = True
-            self.exercise = None
+            self.group = None
             return
         m = _BULLET.match(raw)
         if m:
@@ -286,8 +290,10 @@ class _Parser:
     def entry_line(self, text: str, no: int) -> None:
         """One bullet line. It may hold several mistakes:
 
-        - "54.1 #12 … ／ #13 … ／ 54.3 2b …": split on "／" where a label follows;
-          an item number alone reuses the exercise before it.
+        - "54.1 #12 … ／ #13 … ／ 54.3 2b …": split on "／"; an item number alone
+          reuses the exercise before it.
+        - "10/27 Speak A ／ B": a part with no label is another entry with the
+          label of the part before it.
         - "70.4 #3・#5 …": one entry per item. If the text has exactly one
           "／"-separated part per item, the parts go to the items in order;
           otherwise every item gets the whole text.
@@ -308,7 +314,10 @@ class _Parser:
             labels, rest = matched
             exercise = labels[-1].exercise
             parts = split_outside_parens(rest, "／")
-            if len(labels) > 1 and len(parts) == len(labels):
+            if len(labels) == 1:
+                for part in parts:
+                    self.add_entry(labels[0], part.strip(), no)
+            elif len(parts) == len(labels):
                 for label, part in zip(labels, parts, strict=True):
                     self.add_entry(label, part.strip(), no)
             else:
@@ -360,8 +369,8 @@ class _Parser:
 
     def answer_line(self, raw: str, no: int) -> None:
         content = raw.lstrip(">").strip()
-        if not content:
-            return
+        if not content or content.startswith("**"):
+            return  # empty line, or a note in bold
         segments = [
             piece
             for part in split_outside_parens(content, "／")
@@ -371,33 +380,49 @@ class _Parser:
             segment = segment.strip()
             if not segment:
                 continue
-            matched = match_answer_label(segment, self.exercise)
+            group = None if self.group is UNKNOWN else self.group
+            matched = match_answer_label(segment, group)
+            if matched is not None and not matched[2] and _LABEL_LIKE.match(segment):
+                matched = None  # "想起：…", "130：…": a label we cannot read yet
             if matched is None:
-                self.issue(
-                    no,
-                    "warning",
-                    "unknown-answer-label",
-                    f"Unrecognized label in answer: {segment[:30]!r}",
-                )
+                if self.group is not UNKNOWN or _LABEL_LIKE.match(segment):
+                    self.issue(
+                        no,
+                        "warning",
+                        "unknown-answer-label",
+                        f"Unrecognized label in answer: {segment[:30]!r}",
+                    )
+                # Answers after an unknown label belong to it; skip them quietly.
+                self.group = UNKNOWN
                 continue
-            label, answer = matched
-            self.exercise = label.exercise
+            label, answer, written = matched
+            self.group = label.group
             if not answer:
                 self.issue(no, "warning", "empty-answer", f"No answer after label {label.raw!r}")
                 continue
-            self.answers.append((label.key, answer.strip(), no))
+            self.answers.append((label, answer.strip(), no, written))
 
     def pair_answers(self) -> None:
-        """Attach each answer to the first unanswered entry with the same label."""
-        for key, answer, no in self.answers:
+        """Attach answers to entries in two passes (DESIGN.md 4.1).
+
+        1. Answers whose own label equals an entry's label: the first unanswered
+           entry with that label.
+        2. The other answers (short label or no label), in the order written: the
+           first unanswered entry, in entry order, that the label covers.
+        """
+        entry_keys = {e.label.key for e in self.entries}
+        full = [a for a in self.answers if a[3] and a[0].key in entry_keys]
+        short = [a for a in self.answers if not (a[3] and a[0].key in entry_keys)]
+        for label, answer, no, _ in full:
             target = next(
-                (e for e in self.entries if e.label.key == key and e.answer is None), None
+                (e for e in self.entries if e.label.key == label.key and e.answer is None), None
             )
-            if target is None:
-                self.issue(no, "warning", "orphan-answer", f"Answer has no matching entry: {key!r}")
-                continue
-            target.answer = answer
-            target.answer_line = no
+            self.attach(target, label, answer, no, by_order=False)
+        for label, answer, no, _ in short:
+            target = next(
+                (e for e in self.entries if e.answer is None and label.covers(e.label)), None
+            )
+            self.attach(target, label, answer, no, by_order=True)
 
         if self.section == "category":
             for e in self.entries:
@@ -408,6 +433,18 @@ class _Parser:
                         "no-answer",
                         f"No answer found for {e.label.key or e.text[:30]!r}",
                     )
+
+    def attach(
+        self, target: Entry | None, label: Label, answer: str, no: int, *, by_order: bool
+    ) -> None:
+        if target is None:
+            self.issue(
+                no, "warning", "orphan-answer", f"Answer has no matching entry: {label.key!r}"
+            )
+            return
+        target.answer = answer
+        target.answer_line = no
+        target.answer_by_order = by_order
 
     # -- summary table ------------------------------------------------------
 

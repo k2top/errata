@@ -281,18 +281,28 @@ def test_several_mistakes_on_one_entry_line():
     assert all(e.line == entries[0].line for e in entries[:3])
 
 
-def test_slash_without_label_stays_in_the_sentence():
+def test_part_without_label_is_another_entry_with_the_same_label():
     text = HEADER + dedent("""
         ## A 動詞の形
 
-        - 57.2 #6 either tea / coffee **are** fine ／ not a label here
+        - 10/27 Speak there **was** many people（were）／ we **must not** go（shouldn't have）
+        - 57.2 #6 either tea / coffee **are** fine
 
         > [!check]- 正答
+        > 10/27 Speak：were ／ we shouldn't have gone
         > 57.2 #6 is fine
         """)
     catalog = parse_text(text)
     assert catalog.issues == []
-    assert catalog.entries[0].text == "either tea / coffee are fine ／ not a label here"
+    first, second, third = catalog.entries
+    assert (first.label.raw, first.text, first.memo) == (
+        "10/27 Speak",
+        "there was many people",
+        "were",
+    )
+    assert (second.label.raw, second.text) == ("10/27 Speak", "we must not go")
+    assert [first.answer, second.answer] == ["were", "we shouldn't have gone"]
+    assert third.text == "either tea / coffee are fine"
 
 
 def test_joined_items_share_one_sentence():
@@ -330,3 +340,162 @@ def test_joined_items_take_one_sentence_each():
         "入れ替わり",
     )
     assert [e.answer for e in catalog.entries] == ["b（came up with）", "c（made up）"]
+
+
+# -- answers with a short label or no label (DESIGN.md 4.1) -----------------------
+
+
+def test_second_answer_without_label_uses_the_group():
+    text = HEADER + dedent("""
+        ## A 前置詞
+
+        - 10/20 Speak we **discussed about** it
+        - 10/20 Speak I **arrived to** Tokyo
+
+        > [!check]- 正答
+        > 10/20 Speak：we discussed it ／ I arrived in Tokyo
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert [e.answer for e in catalog.entries] == ["we discussed it", "I arrived in Tokyo"]
+    assert [e.answer_by_order for e in catalog.entries] == [False, True]
+
+
+def test_answer_without_item_number_covers_numbered_entries():
+    text = HEADER + dedent("""
+        ## D 冠詞
+
+        - 11/10 1分タスク(1) very useful **informations**
+        - 11/10 1分タスク(2) two **luggages**
+
+        > [!check]- 正答
+        > 11/10 1分タスク：very useful information ／ two pieces of luggage
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert [e.answer for e in catalog.entries] == [
+        "very useful information",
+        "two pieces of luggage",
+    ]
+    assert all(e.answer_by_order for e in catalog.entries)
+
+
+def test_exercise_alone_covers_its_items_in_order():
+    text = HEADER + dedent("""
+        ## F 形容詞
+
+        - 96.3 #4 the film was **bored** ／ #6 I was **boring**
+
+        > [!check]- 正答
+        > 96.3：boring ／ bored
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert [e.answer for e in catalog.entries] == ["boring", "bored"]
+
+
+def test_full_labels_are_paired_before_short_ones():
+    text = HEADER + dedent("""
+        ## A 前置詞
+
+        - 10/24 混合 英作文 (A) the answer **of** the user
+        - 10/24 混合 (6) wait **to** me
+        - 10/24 混合 (9) listen **me**
+
+        > [!check]- 正答
+        > 10/24 混合：wait for me ／ listen to me ／ 英作文 (A)：the user's answer
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert [e.answer for e in catalog.entries] == [
+        "the user's answer",
+        "wait for me",
+        "listen to me",
+    ]
+    assert [e.answer_by_order for e in catalog.entries] == [False, True, True]
+
+
+def test_group_is_kept_across_answer_lines():
+    text = HEADER + dedent("""
+        ## B 動詞の形
+
+        - 60.2 #5 insist **to pay** ／ #6 keen **to cook**
+
+        > [!check]- 正答
+        > 60.2 #5 on paying
+        > on cooking
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert [e.answer for e in catalog.entries] == ["on paying", "on cooking"]
+
+
+def test_bold_line_in_callout_is_a_note():
+    text = HEADER + dedent("""
+        ## A 前置詞
+
+        - 60.1 #8 look forward to **meet**
+
+        > [!check]- 正答
+        > 60.1 #8 meeting
+        > **3件とも to の後ろを原形にしていた。**
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert catalog.entries[0].answer == "meeting"
+
+
+def test_answer_without_label_or_group_is_reported():
+    text = HEADER + dedent("""
+        ## A 前置詞
+
+        - 60.1 #8 look forward to **meet**
+
+        > [!check]- 正答
+        > meeting
+        """)
+    catalog = parse_text(text)
+    assert "unknown-answer-label" in codes(catalog)
+
+
+def test_extra_short_answer_is_an_orphan():
+    text = HEADER + dedent("""
+        ## F 形容詞
+
+        - 96.3 #4 the film was **bored**
+
+        > [!check]- 正答
+        > 96.3：boring ／ bored
+        """)
+    catalog = parse_text(text)
+    assert codes(catalog) == ["orphan-answer"]
+    assert catalog.entries[0].answer == "boring"
+
+
+def test_unknown_label_in_answer_does_not_take_the_group():
+    text = HEADER + dedent("""
+        ## B 動詞の形
+
+        - 60.2 #5 insist **to pay**
+
+        > [!check]- 正答
+        > 60.2 #5 on paying
+        > 10/9 想起：I moved to Osaka ／ I live there
+        > 130：looked for it
+        """)
+    catalog = parse_text(text)
+    assert codes(catalog) == ["unknown-answer-label", "unknown-answer-label"]
+    assert catalog.entries[0].answer == "on paying"
+
+
+def test_bare_number_after_exercise_group_is_not_an_item():
+    text = HEADER + dedent("""
+        ## B 句動詞
+
+        - 141.4 #3 **made up** it
+
+        > [!check]- 正答
+        > 141.4 #3 made it up ／ 142：threw them away
+        """)
+    catalog = parse_text(text)
+    assert codes(catalog) == ["unknown-answer-label"]
