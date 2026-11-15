@@ -18,6 +18,8 @@ from errata.labels import match_label, resolve_date
         ("10/17 混合 英作文 (A)：I thought", "10/17 混合 英作文 (A)", "mixed-test", "I thought"),
         ("9/18 1分タスク It was", "9/18 1分タスク", "daily-task", "It was"),
         ("11/10 1分タスク (1)：The report", "11/10 1分タスク (1)", "daily-task", "The report"),
+        ("11/10 1分タスク(1) The report", "11/10 1分タスク(1)", "daily-task", "The report"),
+        ("10/3 混合(4)：This is", "10/3 混合(4)", "mixed-test", "This is"),
     ],
 )
 def test_known_labels(text, raw, kind, rest):
@@ -43,6 +45,12 @@ def test_label_key_ignores_extra_spaces():
     a, _ = match_label("10/3 混合 (4) x")
     b, _ = match_label("10/3 混合 (4)：y")
     assert a.key == b.key
+
+
+def test_label_key_ignores_space_before_item_number():
+    a, _ = match_label("11/10 1分タスク(1) x")
+    b, _ = match_label("11/10 1分タスク (1)：y")
+    assert a.key == b.key == "11/10 1分タスク (1)"
 
 
 def test_resolve_date_same_year():

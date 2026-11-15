@@ -153,6 +153,62 @@ def test_duplicate_category_is_an_error():
     assert "duplicate-category" in codes(catalog)
 
 
+def test_answer_item_inherits_previous_exercise():
+    # "／ #6 …" and "／ 3a …" reuse the exercise number written before them.
+    text = HEADER + dedent("""
+        ## A 前置詞
+
+        - 60.2 #5 she insisted **to pay** for it
+        - 60.2 #6 I'm used **to work** late
+        - 64.4 2c he gave up **to try**
+        - 64.4 3a I'm afraid **to fall**
+
+        > [!check]- 正答
+        > 60.2 #5 on paying ／ #6 to working ／ 64.4 2c trying ／ 3a of falling
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert [e.answer for e in catalog.entries] == [
+        "on paying",
+        "to working",
+        "trying",
+        "of falling",
+    ]
+
+
+def test_inherited_item_does_not_cross_callouts():
+    text = HEADER + dedent("""
+        ## A 前置詞
+
+        - 60.2 #5 she insisted **to pay** for it
+
+        > [!check]- 正答
+        > 60.2 #5 on paying
+
+        ## B 動詞
+
+        - 60.3 #6 I'm used **to work** late
+
+        > [!check]- 正答
+        > #6 to working
+        """)
+    assert codes(parse_text(text)) == ["no-answer", "unknown-answer-label"]
+
+
+def test_item_number_without_space_pairs_with_spaced_answer():
+    text = HEADER + dedent("""
+        ## D 冠詞
+
+        - 11/10 1分タスク(1) very useful **informations**
+
+        > [!check]- 正答
+        > 11/10 1分タスク (1)：very useful information
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert catalog.entries[0].answer == "very useful information"
+
+
 def test_same_label_twice_pairs_answers_in_order():
     text = HEADER + dedent("""
         ## A 前置詞

@@ -26,14 +26,16 @@ DATED_KINDS: dict[str, str] = {
 }
 
 _EXERCISE = re.compile(r"(?P<unit>\d{1,3})\.(?P<ex>\d{1,2}) (?P<item>#?\d{1,3}[a-z]?)(?=[\s：:]|$)")
+# An item number alone, e.g. "#6" or "3a", written after "／" to reuse the exercise before it.
+_ITEM_ONLY = re.compile(r"(?:#\d{1,3}[a-z]?|\d{1,3}[a-z])(?=[\s：:]|$)")
 _EXAMPLE = re.compile(r"(?P<unit>\d{1,3}) (?:左|右)ページ [A-Z] の例文")
 _DATED = re.compile(
     r"(?P<m>\d{1,2})/(?P<d>\d{1,2}) "
     r"(?P<kw>" + "|".join(re.escape(k) for k in DATED_KINDS) + r")"
     # Optional qualifiers written in Japanese (no ASCII letters), e.g. 英作文, レベル測定
     r"(?P<qual>(?: [^\sA-Za-z0-9()（）：:]+)*)"
-    # Optional item number in half-width parentheses, e.g. (4), (A)
-    r"(?: \((?P<n>[^)\s]+)\))?"
+    # Optional item number in half-width parentheses, e.g. (4), (A); the space is optional
+    r"(?: ?\((?P<n>[^)\s]+)\))?"
     r"(?=[\s：:]|$)"
 )
 
@@ -50,8 +52,16 @@ class Label:
 
     @property
     def key(self) -> str:
-        """Normalized form used to pair an entry with its answer."""
-        return " ".join(self.raw.split())
+        """Normalized form used to pair an entry with its answer.
+
+        Extra spaces are ignored, and "1分タスク(1)" is the same as "1分タスク (1)".
+        """
+        return re.sub(r"\s*\(", " (", " ".join(self.raw.split()))
+
+    @property
+    def exercise(self) -> str | None:
+        """For an exercise label such as "60.2 #5", the exercise part "60.2"."""
+        return self.raw.split()[0] if self.kind == "exercise" else None
 
 
 UNKNOWN = Label(raw="", kind="unknown")
@@ -83,6 +93,16 @@ def match_label(text: str) -> tuple[Label, str] | None:
         return label, _rest(text, m.end())
 
     return None
+
+
+def match_answer_label(text: str, exercise: str | None) -> tuple[Label, str] | None:
+    """Like ``match_label``, but an item number alone ("#6", "3a") is read as an item
+    of ``exercise``, the exercise written earlier on the same answer line or callout.
+    """
+    matched = match_label(text)
+    if matched is None and exercise and _ITEM_ONLY.match(text):
+        matched = match_label(f"{exercise} {text}")
+    return matched
 
 
 def _rest(text: str, end: int) -> str:

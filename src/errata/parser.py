@@ -22,7 +22,7 @@ from datetime import date
 from pathlib import Path
 from typing import Literal
 
-from .labels import UNKNOWN, Label, match_label, resolve_date
+from .labels import UNKNOWN, Label, match_answer_label, match_label, resolve_date
 
 PENDING_SECTION = "まだ答えを見ていない問題"
 SUMMARY_SECTION = "件数の一覧"
@@ -166,6 +166,7 @@ class _Parser:
         self.entries: list[Entry] = []
         self.answers: list[tuple[str, str, int]] = []  # (label key, answer, line)
         self.in_callout = False
+        self.exercise: str | None = None  # last exercise seen in the current callout
 
     # -- helpers ------------------------------------------------------------
 
@@ -235,6 +236,7 @@ class _Parser:
             return
         if _CHECK_CALLOUT.match(raw):
             self.in_callout = True
+            self.exercise = None
             return
         m = _BULLET.match(raw)
         if m:
@@ -298,7 +300,7 @@ class _Parser:
             segment = segment.strip()
             if not segment:
                 continue
-            matched = match_label(segment)
+            matched = match_answer_label(segment, self.exercise)
             if matched is None:
                 self.issue(
                     no,
@@ -308,6 +310,7 @@ class _Parser:
                 )
                 continue
             label, answer = matched
+            self.exercise = label.exercise
             if not answer:
                 self.issue(no, "warning", "empty-answer", f"No answer after label {label.raw!r}")
                 continue
