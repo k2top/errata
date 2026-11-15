@@ -480,8 +480,8 @@ def test_unknown_label_in_answer_does_not_take_the_group():
 
         > [!check]- 正答
         > 60.2 #5 on paying
-        > 10/9 想起：I moved to Osaka ／ I live there
-        > 130：looked for it
+        > 10/9 Zoom：I moved to Osaka ／ I live there
+        > Unit 5：looked for it
         """)
     catalog = parse_text(text)
     assert codes(catalog) == ["unknown-answer-label", "unknown-answer-label"]
@@ -498,4 +498,64 @@ def test_bare_number_after_exercise_group_is_not_an_item():
         > 141.4 #3 made it up ／ 142：threw them away
         """)
     catalog = parse_text(text)
-    assert codes(catalog) == ["unknown-answer-label"]
+    # "142" is read as unit 142, not as item "141.4 142"
+    assert [i.message for i in catalog.issues] == ["Answer has no matching entry: '142'"]
+
+
+def test_parentheses_right_after_label_are_context():
+    text = HEADER + dedent("""
+        ## G 時制
+
+        - 10/27 Speak（過去の話）I **watch** a movie yesterday（watched）
+        - 10/12 1分タスク(2)（135.4 #5）we **fill** it last week
+
+        > [!check]- 正答
+        > 10/27 Speak：I watched a movie yesterday
+        > 10/12 1分タスク (2)：we filled it in last week
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    first, second = catalog.entries
+    assert (first.context, first.text, first.memo) == (
+        "過去の話",
+        "I watch a movie yesterday",
+        "watched",
+    )
+    assert (second.context, second.text) == ("135.4 #5", "we fill it last week")
+
+
+def test_answer_label_parts_inside_entry_label_on_same_date():
+    text = HEADER + dedent("""
+        ## E 名詞
+
+        - 10/24 混合 英作文 (A) the **question's** contradiction
+        - 10/24 言い直し 英作文 (B) they are very **similarity**
+
+        > [!check]- 正答
+        > 10/24 英作文 (A)：the contradiction in the question
+        > 10/24 言い直し (B)：they are very similar
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert [e.answer for e in catalog.entries] == [
+        "the contradiction in the question",
+        "they are very similar",
+    ]
+
+
+def test_item_alone_replaces_the_item_of_a_nested_exercise():
+    text = HEADER + dedent("""
+        ## B 句動詞
+
+        - 10/21 言い直し 141.4 #3 **made up** it ／ #5 **fix up** it
+
+        > [!check]- 正答
+        > 10/21 言い直し 141.4 #3 made it up ／ #5 came up with it
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert [e.label.raw for e in catalog.entries] == [
+        "10/21 言い直し 141.4 #3",
+        "10/21 言い直し 141.4 #5",
+    ]
+    assert [e.answer for e in catalog.entries] == ["made it up", "came up with it"]

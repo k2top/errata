@@ -33,9 +33,9 @@
 Catalog   path, created, categories{id -> Category}, pending[Entry], summary[SummaryRow], issues[Issue]
 Category  id ("A"), title, rule, entries[Entry], line
 Entry     category_id, label, text, error_parts, memo, repeat, date, answer, line,
-          answer_by_order (see 4.1)
-Label     raw, kind (exercise | example | speak | mixed-test | daily-task | unknown),
-          unit, month_day
+          answer_by_order (see 4.1), context (see 4.2)
+Label     raw, kind (exercise | example | speak | mixed-test | daily-task | recall |
+          redo | composition | anki | any | unknown), unit, month_day, base
 Issue     line, level (error | warning), code, message
 ```
 
@@ -62,7 +62,7 @@ The parser is a line-based state machine. It never stops on a bad line; it recor
 | `- <label> <sentence>（memo）` | Entry |
 | `> [!check]- 正答` | Start of answers; following `>` lines are answers |
 | `> <label>：answer ／ <label> answer` | One or more answers, split on `／` outside parentheses |
-| `- 54.1 #12 … ／ #13 … ／ 54.3 2b …` | Several entries on one line: split on every full-width `／` outside parentheses; an item number alone reuses the exercise before it |
+| `- 54.1 #12 … ／ #13 … ／ 54.3 2b …` | Several entries on one line: split on every full-width `／` outside parentheses; an item number alone replaces the last item of the label before it (`10/21 言い直し 141.4 #3 … ／ #5` → `10/21 言い直し 141.4 #5`) |
 | `- 10/27 Speak A ／ B` | A part with no label is another entry with the label of the part before it (two mistakes in one session). The half-width `/` (`prefer / rather`) is not a separator |
 | `- 70.4 #3・#5 …` | One entry per item. If the parts with no label after it number exactly one per item, they go to the items in order; otherwise every item gets the whole text |
 | `> 141.1 #2 b・#3 c` | In answers, `・` followed by a label also separates answers |
@@ -93,10 +93,14 @@ exercise (`96.3`), and item (`#4`, `(1)`, `(A)`, `英作文 (A)`). Words such as
 
 **Full and short answer labels.**
 - An answer label is *full* if its key equals the key of some entry in the section.
-- Otherwise it is *short*. A short label *covers* an entry when every field the short
-  label gives is equal to the entry's field. Fields the short label leaves out can be
-  anything. Examples: `11/10 1分タスク` covers `11/10 1分タスク (1)` and `(2)`;
-  `96.3` covers `96.3 #4` and `96.3 #6`.
+- Otherwise it is *short*. A short label *covers* an entry:
+  - without an item: when every field the short label gives is equal to the entry's
+    field. Fields the short label leaves out can be anything. Examples:
+    `11/10 1分タスク` covers `11/10 1分タスク (1)` and `(2)`; `96.3` covers `96.3 #4`
+    and `96.3 #6`.
+  - with an item: when the dates are equal and every part of the short label is a part
+    of the entry's label. Example: `10/24 英作文 (A)` covers `10/24 混合 英作文 (A)`;
+    `10/24 言い直し (A)` covers `10/24 言い直し 英作文 (A)`.
 
 **Group (the label carried to the next answer).** Each answer leaves a group that the
 next answer without a label uses:
@@ -140,8 +144,8 @@ and does not change the group.
   not been seen.
 - Ranges such as `72.3 #7〜10`.
 
-**Label recognition** uses an ordered list of regular expressions (`labels.py`). The
-label must be recognized by pattern because some labels contain ASCII words (`Speak`,
+**Label recognition** reads a label as a row of known parts (`labels.py`, see 4.2). The
+label must be recognized by its parts because some labels contain ASCII words (`Speak`,
 `B`), so "everything before the first English word" does not work. Unknown labels are
 kept as entries with kind `unknown` and reported as warnings.
 
@@ -149,6 +153,50 @@ kept as entries with kind `unknown` and reported as warnings.
 `unknown-answer-label`, `empty-answer`, `no-bold`, `empty-entry`, `bad-date`,
 `summary-count-mismatch`, `summary-missing-section`, `section-not-in-summary`,
 `summary-count`, `duplicate-category` (error), front-matter issues.
+
+### 4.2 Parts of a label
+
+A label is a row of parts separated by one space. Reading stops at the first text that
+is not a part. Each part must end at a space, `：`, `（`, `「`, or the end of the text.
+
+| Part | Examples | Field |
+|---|---|---|
+| Date (first part only), with optional `夜` | `10/9`, `9/18夜` | `month_day` |
+| Exercise, then an optional item | `96.3`, `60.2 #5`, `64.4 3a` | `unit`, item |
+| Unit | `130`, `17` | `unit` |
+| Kind word | see below | `kind` (the first kind word) |
+| Letter after `左ページ` / `右ページ` | `B` | item |
+| Number in half-width parentheses, space optional | `(4)`, `(A)` | item |
+| Japanese word after a kind word | `レベル測定`, `の規則` | item |
+
+Kind words (longest first):
+
+| Kind | Words |
+|---|---|
+| speak | `Speak` |
+| mixed-test | `混合` |
+| daily-task | `1分タスク` |
+| recall | `前日の想起の例文`, `前日の想起の規則`, `前日の想起`, `想起の例文`, `想起` |
+| redo | `採点後の言い直し`, `言い直し` |
+| composition | `英作文` (alone; after `混合` it is an item) |
+| example | `左ページの例文`, `左ページ例文`, `右ページの例文`, `右ページ例文`, `左ページ`, `右ページ`, `の例文`, `例文` |
+| anki | `Anki` |
+
+- With no kind word, a label with an exercise has kind `exercise`; otherwise kind `any`.
+- A label is read only when `：` follows it if it has neither a kind word nor an
+  exercise (`130`, `10/9`), or has no date and no unit (`Speak`, `1分タスク`). Without
+  this, a sentence such as `Speak up` would be read as a label.
+- In an answer, `英作文 (A)` with no date and no unit is an item of the group
+  (`10/24 混合` → `10/24 混合 英作文 (A)`), not a label of its own.
+- An exercise followed by `#` that is not an item (`72.4 #6〜8`, a range) is not a label.
+- **Base and item.** The base is the label up to the end of the first kind word, or up
+  to the exercise when there is no kind word, or the whole label. The rest is the item.
+  Examples: `10/24 混合 英作文 (A)` → base `10/24 混合`; `11/4 言い直し 100.3 #2` → base
+  `11/4 言い直し`; `60.2 #5` → base `60.2`.
+- A short label `covers` an entry by fields (4.1). Kind `any` matches every kind.
+- **Context.** A `（…）` at the start of the sentence, right after the label
+  (`10/27 Speak（過去の話）I …`, `10/12 1分タスク(2)（135.4 #5）…`), is not part of the
+  label or the sentence. It is kept as `Entry.context`.
 
 ## 5. Architecture
 

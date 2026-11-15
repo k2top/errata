@@ -39,6 +39,7 @@ _RULE = re.compile(r"^\*\*規則\*\*\s*[：:]\s*(?P<rule>.+?)\s*$")
 _BULLET = re.compile(r"^- (?P<text>.+?)\s*$")
 _CHECK_CALLOUT = re.compile(r"^>\s*\[!check\][-+]?\s*正答")
 _MEMO = re.compile(r"（(?P<memo>[^（）]*)）\s*$")
+_CONTEXT = re.compile(r"（(?P<context>[^（）]*)）\s*")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _REPEAT = re.compile(r"(\d+)回目")
 _TABLE_ROW = re.compile(r"^\|(?P<cells>.+)\|\s*$")
@@ -100,6 +101,7 @@ class Entry:
     date: date | None = None
     answer: str | None = None
     answer_line: int | None = None
+    context: str | None = None  # "（…）" right after the label (DESIGN.md 4.2)
     answer_by_order: bool = False  # paired by order, not by its own label (DESIGN.md 4.1)
 
     @property
@@ -212,6 +214,7 @@ class _Parser:
         self.answers: list[tuple[Label, str, int, bool]] = []
         self.in_callout = False
         self.group: Label | None = None  # left by the last answer in the current callout
+        self.prefix: str | None = None  # item_prefix of the last answer
 
     # -- helpers ------------------------------------------------------------
 
@@ -282,6 +285,7 @@ class _Parser:
         if _CHECK_CALLOUT.match(raw):
             self.in_callout = True
             self.group = None
+            self.prefix = None
             return
         m = _BULLET.match(raw)
         if m:
@@ -303,16 +307,16 @@ class _Parser:
             self.add_entry(UNKNOWN, text, no)
             return
 
-        exercise: str | None = None
+        prefix: str | None = None
         for segment in split_before_labels(text, "／"):
-            matched = match_entry_labels(segment, exercise)
+            matched = match_entry_labels(segment, prefix)
             if matched is None:  # cannot happen: split only before labels
                 self.issue(
                     no, "warning", "unknown-label", f"Unrecognized source label: {segment[:30]!r}"
                 )
                 continue
             labels, rest = matched
-            exercise = labels[-1].exercise
+            prefix = labels[-1].item_prefix
             parts = split_outside_parens(rest, "／")
             if len(labels) == 1:
                 for part in parts:
@@ -325,6 +329,12 @@ class _Parser:
                     self.add_entry(label, rest, no)
 
     def add_entry(self, label: Label, rest: str, no: int) -> None:
+        context = None
+        m = _CONTEXT.match(rest)
+        if m and rest[m.end() :].strip():
+            context = m.group("context")
+            rest = rest[m.end() :]
+
         memo = None
         m = _MEMO.search(rest)
         if m:
@@ -360,6 +370,7 @@ class _Parser:
             repeat=repeat,
             line=no,
             date=entry_date,
+            context=context,
         )
         self.entries.append(entry)
         if self.category is not None:
@@ -381,7 +392,7 @@ class _Parser:
             if not segment:
                 continue
             group = None if self.group is UNKNOWN else self.group
-            matched = match_answer_label(segment, group)
+            matched = match_answer_label(segment, group, self.prefix)
             if matched is not None and not matched[2] and _LABEL_LIKE.match(segment):
                 matched = None  # "想起：…", "130：…": a label we cannot read yet
             if matched is None:
@@ -394,9 +405,11 @@ class _Parser:
                     )
                 # Answers after an unknown label belong to it; skip them quietly.
                 self.group = UNKNOWN
+                self.prefix = None
                 continue
             label, answer, written = matched
             self.group = label.group
+            self.prefix = label.item_prefix
             if not answer:
                 self.issue(no, "warning", "empty-answer", f"No answer after label {label.raw!r}")
                 continue
