@@ -2,6 +2,8 @@ from datetime import date
 from pathlib import Path
 from textwrap import dedent
 
+import pytest
+
 from errata.parser import parse_file, parse_text
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "vault" / "06-誤答カタログ.md"
@@ -559,3 +561,86 @@ def test_item_alone_replaces_the_item_of_a_nested_exercise():
         "10/21 言い直し 141.4 #5",
     ]
     assert [e.answer for e in catalog.entries] == ["made it up", "came up with it"]
+
+
+# -- every issue code, with its line ------------------------------------------------
+
+_BODY = """
+## 件数の一覧
+
+| 分類 | 件数 |
+|---|---|
+| A 前置詞 | x |
+| B 動詞の形 | 9 |
+| C 冠詞 | 1 |
+
+## A 前置詞
+
+- 2/30 Speak I **goed** home
+- 60.1 #8（メモだけ）
+- 60.1 #9 look forward to meet
+- ??? not a label
+- 60.1 #7 good at **swim**
+
+> [!check]- 正答
+> 60.1 #9 to meeting
+> 60.1 #7：
+> 61.2 #1 extra answer
+> Unit 5：unknown label
+> 2/30 Speak：I went home
+
+## B 動詞の形
+
+- 54.1 #12 stop **to smoke**
+
+> [!check]- 正答
+> 54.1 #12 smoking
+
+## D 名詞
+
+## A 前置詞
+"""
+
+
+def _line_of(text: str, marker: str, nth: int = 1) -> int:
+    hits = [i + 1 for i, line in enumerate(text.splitlines()) if marker in line]
+    return hits[nth - 1]
+
+
+def test_each_issue_code_is_reported_on_its_line():
+    text = HEADER + _BODY
+    catalog = parse_text(text)
+    got = {(i.code, i.line) for i in catalog.issues}
+    expected = {
+        ("summary-count", _line_of(text, "| A 前置詞 | x |")),
+        ("summary-count-mismatch", _line_of(text, "| B 動詞の形 | 9 |")),
+        ("summary-missing-section", _line_of(text, "| C 冠詞 | 1 |")),
+        ("bad-date", _line_of(text, "- 2/30 Speak")),
+        ("empty-entry", _line_of(text, "- 60.1 #8（メモだけ）")),
+        ("no-bold", _line_of(text, "- 60.1 #9 look")),
+        ("unknown-label", _line_of(text, "- ??? not a label")),
+        ("no-bold", _line_of(text, "- ??? not a label")),
+        ("no-answer", _line_of(text, "- ??? not a label")),
+        ("empty-answer", _line_of(text, "> 60.1 #7：")),
+        ("no-answer", _line_of(text, "- 60.1 #7 good at")),
+        ("orphan-answer", _line_of(text, "> 61.2 #1 extra answer")),
+        ("unknown-answer-label", _line_of(text, "> Unit 5：")),
+        ("section-not-in-summary", _line_of(text, "## D 名詞")),
+        ("duplicate-category", _line_of(text, "## A 前置詞", nth=2)),
+    }
+    assert got == expected
+
+
+@pytest.mark.parametrize(
+    ("front", "code", "level"),
+    [
+        ("", "no-front-matter", "warning"),
+        ("---\ntype: error-catalog\n", "front-matter-open", "error"),
+        ("---\ntype: notes\ncreated: 2026-09-18\n---\n", "front-matter-type", "warning"),
+        ("---\ntype: error-catalog\n---\n", "front-matter-created", "warning"),
+        ("---\ntype: error-catalog\ncreated: 2026-13-01\n---\n", "front-matter-created", "warning"),
+    ],
+)
+def test_front_matter_issues_are_on_line_1(front, code, level):
+    catalog = parse_text(front + "# title\n")
+    assert [(i.code, i.line, i.level) for i in catalog.issues] == [(code, 1, level)]
