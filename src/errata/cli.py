@@ -94,9 +94,11 @@ def _entry_json(e) -> dict:
         "date": e.date,
         "text": e.text,
         "error_parts": e.error_parts,
+        "context": e.context,
         "memo": e.memo,
         "repeat": e.repeat,
         "answer": e.answer,
+        "answer_by_order": e.answer_by_order,
         "line": e.line,
     }
 
