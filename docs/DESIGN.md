@@ -60,7 +60,10 @@ The parser is a line-based state machine. It never stops on a bad line; it recor
 | `**規則**：…` | Rule of the current category |
 | `- <label> <sentence>（memo）` | Entry |
 | `> [!check]- 正答` | Start of answers; following `>` lines are answers |
-| `> <label>：answer ／ <label> answer` | One or more answers, split on `／` |
+| `> <label>：answer ／ <label> answer` | One or more answers, split on `／` outside parentheses |
+| `- 54.1 #12 … ／ #13 … ／ 54.3 2b …` | Several entries on one line: split on `／` (outside parentheses) only where a label follows; an item number alone reuses the exercise before it |
+| `- 70.4 #3・#5 …` | One entry per item. If the text has exactly one `／` part per item, the parts go to the items in order; otherwise every item gets the whole text |
+| `> 141.1 #2 b・#3 c` | In answers, `・` followed by a label also separates answers |
 
 **Pairing answers:** at the end of a section, each answer is attached to the first
 unanswered entry with the same normalized label. This handles two entries with the

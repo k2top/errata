@@ -222,3 +222,111 @@ def test_same_label_twice_pairs_answers_in_order():
     catalog = parse_text(text)
     assert [e.answer for e in catalog.entries] == ["we discussed it", "I arrived in Tokyo"]
     assert catalog.issues == []
+
+
+# -- slashes inside parentheses and several mistakes on one line ------------------
+
+
+def test_slash_inside_parentheses_does_not_split_answer():
+    text = HEADER + dedent("""
+        ## A 前置詞
+
+        - 10/20 Speak I **felt** tired
+        - 10/21 Speak she **arrive** late
+
+        > [!check]- 正答
+        > 10/20 Speak：I was tired（was／felt）／ 10/21 Speak：she arrived（arrive／arrives）
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert [e.answer for e in catalog.entries] == [
+        "I was tired（was／felt）",
+        "she arrived（arrive／arrives）",
+    ]
+
+
+def test_several_mistakes_on_one_entry_line():
+    text = HEADER + dedent("""
+        ## A 動詞の形
+
+        - 54.1 #12 stop **to smoke**（やめる）／ #13 enjoy **to swim** ／ 54.3 2b keep **to run**
+        - 55.1 #4 We **hardly meet** last year.（a／b どちらも違う）／ #6 he **hardly call** me
+
+        > [!check]- 正答
+        > 54.1 #12 smoking ／ #13 swimming ／ 54.3 2b running
+        > 55.1 #4 hardly met ／ #6 hardly called
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    entries = catalog.entries
+    assert [e.label.raw for e in entries] == [
+        "54.1 #12",
+        "54.1 #13",
+        "54.3 2b",
+        "55.1 #4",
+        "55.1 #6",
+    ]
+    assert entries[0].text == "stop to smoke"
+    assert entries[0].memo == "やめる"
+    assert entries[1].error_parts == ["to swim"]
+    assert entries[3].text == "We hardly meet last year."
+    assert entries[3].memo == "a／b どちらも違う"
+    assert [e.answer for e in entries] == [
+        "smoking",
+        "swimming",
+        "running",
+        "hardly met",
+        "hardly called",
+    ]
+    assert all(e.line == entries[0].line for e in entries[:3])
+
+
+def test_slash_without_label_stays_in_the_sentence():
+    text = HEADER + dedent("""
+        ## A 動詞の形
+
+        - 57.2 #6 either tea / coffee **are** fine ／ not a label here
+
+        > [!check]- 正答
+        > 57.2 #6 is fine
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert catalog.entries[0].text == "either tea / coffee are fine ／ not a label here"
+
+
+def test_joined_items_share_one_sentence():
+    text = HEADER + dedent("""
+        ## A 動詞の形
+
+        - 70.4 #3・#5 **two or three day**（複数形）
+
+        > [!check]- 正答
+        > 70.4 #3 two or three days ／ #5 two or three days
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    assert [e.label.raw for e in catalog.entries] == ["70.4 #3", "70.4 #5"]
+    assert [e.text for e in catalog.entries] == ["two or three day"] * 2
+    assert [e.memo for e in catalog.entries] == ["複数形"] * 2
+
+
+def test_joined_items_take_one_sentence_each():
+    text = HEADER + dedent("""
+        ## A 句動詞
+
+        - 141.1 #2・#3 she made up **a plan** ／ he came up with **an excuse**（入れ替わり）
+
+        > [!check]- 正答
+        > 141.1 #2 b（came up with）・#3 c（made up）
+        """)
+    catalog = parse_text(text)
+    assert catalog.issues == []
+    first, second = catalog.entries
+    assert (first.label.raw, first.text, first.memo) == ("141.1 #2", "she made up a plan", None)
+    assert (second.label.raw, second.text, second.memo) == (
+        "141.1 #3",
+        "he came up with an excuse",
+        "入れ替わり",
+    )
+    assert [e.answer for e in catalog.entries] == ["b（came up with）", "c（made up）"]

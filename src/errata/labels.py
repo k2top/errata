@@ -28,6 +28,12 @@ DATED_KINDS: dict[str, str] = {
 _EXERCISE = re.compile(r"(?P<unit>\d{1,3})\.(?P<ex>\d{1,2}) (?P<item>#?\d{1,3}[a-z]?)(?=[\s：:]|$)")
 # An item number alone, e.g. "#6" or "3a", written after "／" to reuse the exercise before it.
 _ITEM_ONLY = re.compile(r"(?:#\d{1,3}[a-z]?|\d{1,3}[a-z])(?=[\s：:]|$)")
+# Items joined with "・", e.g. "70.4 #3・#5": one mistake line for several items.
+# The exercise part is optional when it can be taken from earlier on the line.
+_JOINED = re.compile(
+    r"(?:(?P<ex>\d{1,3}\.\d{1,2}) )?"
+    r"(?P<items>#?\d{1,3}[a-z]?(?:・#?\d{1,3}[a-z]?)+)(?=[\s：:]|$)"
+)
 _EXAMPLE = re.compile(r"(?P<unit>\d{1,3}) (?:左|右)ページ [A-Z] の例文")
 _DATED = re.compile(
     r"(?P<m>\d{1,2})/(?P<d>\d{1,2}) "
@@ -103,6 +109,33 @@ def match_answer_label(text: str, exercise: str | None) -> tuple[Label, str] | N
     if matched is None and exercise and _ITEM_ONLY.match(text):
         matched = match_label(f"{exercise} {text}")
     return matched
+
+
+def match_entry_labels(text: str, exercise: str | None) -> tuple[list[Label], str] | None:
+    """Like ``match_answer_label``, but items joined with "・" ("70.4 #3・#5") give
+    one label per item.
+    """
+    m = _JOINED.match(text)
+    if m:
+        ex = m.group("ex") or exercise
+        if ex:
+            labels = []
+            for item in m.group("items").split("・"):
+                matched = match_label(f"{ex} {item}")
+                if matched is None:
+                    break
+                labels.append(matched[0])
+            else:
+                return labels, _rest(text, m.end())
+    matched = match_answer_label(text, exercise)
+    if matched is None:
+        return None
+    return [matched[0]], matched[1]
+
+
+def starts_with_label(text: str) -> bool:
+    """True if ``text`` starts with a label, an item number alone, or joined items."""
+    return bool(match_label(text) or _ITEM_ONLY.match(text) or _JOINED.match(text))
 
 
 def _rest(text: str, end: int) -> str:

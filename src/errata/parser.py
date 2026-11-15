@@ -22,7 +22,14 @@ from datetime import date
 from pathlib import Path
 from typing import Literal
 
-from .labels import UNKNOWN, Label, match_answer_label, match_label, resolve_date
+from .labels import (
+    UNKNOWN,
+    Label,
+    match_answer_label,
+    match_entry_labels,
+    resolve_date,
+    starts_with_label,
+)
 
 PENDING_SECTION = "まだ答えを見ていない問題"
 SUMMARY_SECTION = "件数の一覧"
@@ -35,6 +42,40 @@ _MEMO = re.compile(r"（(?P<memo>[^（）]*)）\s*$")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _REPEAT = re.compile(r"(\d+)回目")
 _TABLE_ROW = re.compile(r"^\|(?P<cells>.+)\|\s*$")
+_OPEN = "（("
+_CLOSE = "）)"
+
+
+def split_outside_parens(text: str, sep: str) -> list[str]:
+    """Split ``text`` on ``sep``, but not inside （…） or (…)."""
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch in _OPEN:
+            depth += 1
+        elif ch in _CLOSE:
+            depth = max(depth - 1, 0)
+        elif ch == sep and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    parts.append(text[start:])
+    return parts
+
+
+def split_before_labels(text: str, sep: str) -> list[str]:
+    """Split on ``sep`` (outside parentheses) only where a label follows it.
+
+    Other separators stay in the text, so "prefer / rather" or a "／" inside a
+    sentence is not cut.
+    """
+    segments: list[str] = []
+    for part in split_outside_parens(text, sep):
+        if segments and not starts_with_label(part.strip()):
+            segments[-1] += sep + part
+        else:
+            segments.append(part)
+    return [s.strip() for s in segments]
 
 
 @dataclass
@@ -243,13 +284,38 @@ class _Parser:
             self.entry_line(m.group("text"), no)
 
     def entry_line(self, text: str, no: int) -> None:
-        matched = match_label(text)
-        if matched is None:
-            self.issue(no, "warning", "unknown-label", f"Unrecognized source label: {text[:30]!r}")
-            label, rest = UNKNOWN, text
-        else:
-            label, rest = matched
+        """One bullet line. It may hold several mistakes:
 
+        - "54.1 #12 … ／ #13 … ／ 54.3 2b …": split on "／" where a label follows;
+          an item number alone reuses the exercise before it.
+        - "70.4 #3・#5 …": one entry per item. If the text has exactly one
+          "／"-separated part per item, the parts go to the items in order;
+          otherwise every item gets the whole text.
+        """
+        if match_entry_labels(text, None) is None:
+            self.issue(no, "warning", "unknown-label", f"Unrecognized source label: {text[:30]!r}")
+            self.add_entry(UNKNOWN, text, no)
+            return
+
+        exercise: str | None = None
+        for segment in split_before_labels(text, "／"):
+            matched = match_entry_labels(segment, exercise)
+            if matched is None:  # cannot happen: split only before labels
+                self.issue(
+                    no, "warning", "unknown-label", f"Unrecognized source label: {segment[:30]!r}"
+                )
+                continue
+            labels, rest = matched
+            exercise = labels[-1].exercise
+            parts = split_outside_parens(rest, "／")
+            if len(labels) > 1 and len(parts) == len(labels):
+                for label, part in zip(labels, parts, strict=True):
+                    self.add_entry(label, part.strip(), no)
+            else:
+                for label in labels:
+                    self.add_entry(label, rest, no)
+
+    def add_entry(self, label: Label, rest: str, no: int) -> None:
         memo = None
         m = _MEMO.search(rest)
         if m:
@@ -296,7 +362,12 @@ class _Parser:
         content = raw.lstrip(">").strip()
         if not content:
             return
-        for segment in content.split("／"):
+        segments = [
+            piece
+            for part in split_outside_parens(content, "／")
+            for piece in split_before_labels(part, "・")
+        ]
+        for segment in segments:
             segment = segment.strip()
             if not segment:
                 continue
