@@ -32,7 +32,8 @@
 ```
 Catalog   path, created, categories{id -> Category}, pending[Entry], summary[SummaryRow], issues[Issue]
 Category  id ("A"), title, rule, entries[Entry], line
-Entry     category_id, label, text, error_parts, memo, repeat, date, answer, line
+Entry     category_id, label, text, error_parts, memo, repeat, date, answer, line,
+          answer_by_order (see 4.1)
 Label     raw, kind (exercise | example | speak | mixed-test | daily-task | unknown),
           unit, month_day
 Issue     line, level (error | warning), code, message
@@ -69,6 +70,70 @@ The parser is a line-based state machine. It never stops on a bad line; it recor
 unanswered entry with the same normalized label. This handles two entries with the
 same label (for example, two mistakes in one Speak session) as long as the answers are
 written in the same order.
+
+### 4.1 Answers with a short label or no label
+
+The learner often writes the answer with less detail than the entry. Real examples
+(sentences replaced):
+
+| Entry side | Answer side | Shortened part |
+|---|---|---|
+| `- 10/20 Speak A` / `- 10/20 Speak B` | `> 10/20 Speak：a ／ b` | Label of the 2nd answer |
+| `- 11/10 1分タスク(1) …` | `> 11/10 1分タスク：…` | Item number |
+| `- 96.3 #4 … ／ #6 …` | `> 96.3：a ／ b` | Item number, then the whole label |
+| `- 10/24 混合 (6)`, `(9)`, `英作文 (A)` | `> 10/24 混合：a ／ b ／ 英作文 (A)：c` | Item numbers |
+
+In every example checked in the real catalog, these answers are in the same order as
+the entries. The rules below rely on that.
+
+**Fields of a label.** A label is read into fields: date (`month_day`), kind, unit,
+exercise (`96.3`), and item (`#4`, `(1)`, `(A)`, `英作文 (A)`). Words such as
+`英作文` belong to the item, not to the kind.
+
+**Full and short answer labels.**
+- An answer label is *full* if its key equals the key of some entry in the section.
+- Otherwise it is *short*. A short label *covers* an entry when every field the short
+  label gives is equal to the entry's field. Fields the short label leaves out can be
+  anything. Examples: `11/10 1分タスク` covers `11/10 1分タスク (1)` and `(2)`;
+  `96.3` covers `96.3 #4` and `96.3 #6`.
+
+**Group (the label carried to the next answer).** Each answer leaves a group that the
+next answer without a label uses:
+- After a full label with an item, the group is that label without the item
+  (`96.3 #4` → `96.3`; `10/3 混合 (4)` → `10/3 混合`).
+- After a full label without an item (`10/20 Speak`), or after a short label, the group
+  is that label.
+- An answer with no label is read as a short label equal to the group.
+- The group is kept to the end of the callout, across `>` lines, like the exercise for
+  `#6` today. It is cleared at each new `> [!check]- 正答`.
+- An answer with no label and no group is reported as `unknown-answer-label`, as now.
+
+**Two-pass pairing** (at the end of a section):
+1. Full labels first, with the existing rule (same key, first unanswered entry).
+   This runs first so a short answer cannot take an entry that has its own full
+   answer later in the callout (the `10/24 混合` example).
+2. Short labels and answers without a label, in the order they are written: each is
+   attached to the first unanswered entry, in entry order, that the label covers.
+   Entries attached this way get `Entry.answer_by_order = True`, so a report can show
+   how many pairs depend on order.
+
+If a short answer covers no unanswered entry, it is `orphan-answer`. If entries are
+left, they are `no-answer`. Both are the existing warnings, and a wrong count of
+answers shows up as one of them. A pair in the wrong order is not detected; this is
+the cost of these rules.
+
+**Notes in a callout.** A `>` line whose content starts with `**` is a note (for
+example, a summary of the mistakes in the section). It is skipped without a warning
+and does not change the group.
+
+**Not covered here.**
+- New label forms are handled in item (5): `想起`, `言い直し`, `10/9夜`, `Speak` with no
+  date, and a unit alone (`130：`). Once (5) adds them, they are short labels under the
+  same rules.
+- An answer more detailed than its entry (entry `11/10 1分タスク`, answer
+  `11/10 1分タスク (1)`) is not matched. It stays `orphan-answer`, because this form has
+  not been seen.
+- Ranges such as `72.3 #7〜10`.
 
 **Label recognition** uses an ordered list of regular expressions (`labels.py`). The
 label must be recognized by pattern because some labels contain ASCII words (`Speak`,
